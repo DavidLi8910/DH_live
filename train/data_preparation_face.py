@@ -25,7 +25,12 @@ from talkingface.utils import *
 from gfpgan import GFPGANer
 
 # 配置logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log_dir = os.path.join(os.getcwd(), 'logs')
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+log_file_path = os.path.join(log_dir, 'data_preparation_face.log')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename=log_file_path)
 logger = logging.getLogger(__name__)
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -425,8 +430,6 @@ def process_video(video_path, output_dir, export_imgs=True):
             )
             subprocess.run(ffmpeg_cmd, shell=True, check=True)
 
-            # gfpgan_cmd = f"python GFPGAN/inference_gfpgan.py -i {video_data_path}/image -v 1.3 -s 1 -o {video_data_path}/image"
-            # subprocess.run(gfpgan_cmd, shell=True, check=True)
             gfpgan_model = load_model(version='1.3', upscale=1, bg_upsampler_model='realesrgan', bg_tile=400)
             run_gfpgan(model=gfpgan_model, input="{}/image".format(output_dir),
                        output_dir="{}/image".format(output_dir), weight=0.5)
@@ -493,17 +496,14 @@ def process_video(video_path, output_dir, export_imgs=True):
 
 
 def main(args):
-    # 检查命令行参数的数量
-    if len(args) != 2 or not os.path.isdir(args.videos_path):
-        print("Usage: python data_preparation.py --video_dir <video_dir>")
-        sys.exit(1)
+    if not os.path.isdir(args.videos_dir):
+        raise NotADirectoryError("The specified path is not a directory")
 
     # 获取video_name参数
-    data_dir = args.videos_path
-    logger.info("Video dir is set to: {}".format(data_dir))
+    logger.info("Video dir is set to: {}".format(args.videos_dir))
 
     # data_dir = r"F:\C\AI\CV\88"
-    video_files = glob.glob("{}/*.mp4".format(data_dir))
+    video_files = glob.glob("{}/*.mp4".format(args.videos_dir))
     if not video_files:
         raise FileNotFoundError("Empty directory")
 
