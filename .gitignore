@@ -9,4 +9,5 @@ checkpoint
 syncnet_checkpoint
 *.jpg
 __MACOSX
-output
+/checkpoint/
+/output/
