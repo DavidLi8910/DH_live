@@ -1,5 +1,3 @@
-import numpy as np
-import cv2
 import tqdm
 import copy
 from talkingface.utils import *
@@ -7,21 +5,30 @@ import glob
 import pickle
 import torch
 import torch.utils.data as data
-def get_image(A_path, crop_coords, input_type, resize= (256, 256)):
-    (x_min, y_min, x_max, y_max) = crop_coords
-    size = (x_max - x_min, y_max - y_min)
 
-    if input_type == 'mediapipe':
-        pose_pts = (A_path - np.array([x_min, y_min])) * resize / size
-        return pose_pts[:, :2]
-    else:
-        img_output = A_path[y_min:y_max, x_min:x_max, :]
-        img_output = cv2.resize(img_output, resize)
-        return img_output
+
+def get_image(A_path, crop_coords, input_type, resize=(256, 256)):
+    if A_path is None:
+        raise ValueError("A_path不能为空")
+
+    try:
+        (x_min, y_min, x_max, y_max) = crop_coords
+        size = (x_max - x_min, y_max - y_min)
+
+        if input_type == 'mediapipe':
+            pose_pts = (A_path - np.array([x_min, y_min])) * resize / size
+            return pose_pts[:, :2]
+        else:
+            img_output = A_path[y_min:y_max, x_min:x_max, :]
+            img_output = cv2.resize(img_output, resize)
+            return img_output
+    except Exception as e:
+        raise ValueError("Error: {}".format(e))
+
 def generate_input(img, keypoints, mask_keypoints, is_train = False, mode=["mouth_bias"], mouth_width = None, mouth_height = None):
     # 根据关键点决定正方形裁剪区域
     crop_coords = crop_face(keypoints, size=img.shape[:2], is_train=is_train)
-    target_keypoints = get_image(keypoints[:,:2], crop_coords, input_type='mediapipe')
+    target_keypoints = get_image(keypoints[:, :2], crop_coords, input_type='mediapipe')
     target_img = get_image(img, crop_coords, input_type='img')
 
     target_mask_keypoints = get_image(mask_keypoints[:,:2], crop_coords, input_type='mediapipe')
@@ -42,9 +49,10 @@ def generate_input(img, keypoints, mask_keypoints, is_train = False, mode=["mout
     pts = pts.reshape((-1, 1, 2)).astype(np.int32)
     cv2.fillPoly(source_img, [pts], color=(0, 0, 0))
     source_face_egde = draw_face_feature_maps(source_keypoints, mode=mode, im_edges=target_img,
-                                              mouth_width = mouth_width * (256/(crop_coords[2] - crop_coords[0])), mouth_height = mouth_height * (256/(crop_coords[2] - crop_coords[0])))
+                                              mouth_width=mouth_width * (256 / (crop_coords[2] - crop_coords[0])),
+                                              mouth_height=mouth_height * (256 / (crop_coords[2] - crop_coords[0])))
     source_img = np.concatenate([source_img, source_face_egde], axis=2)
-    return source_img,target_img,crop_coords
+    return source_img, target_img, crop_coords
 
 def generate_ref(img, keypoints, is_train=False, alpha = None, beta = None):
     crop_coords = crop_face(keypoints, size=img.shape[:2], is_train=is_train)
@@ -84,7 +92,7 @@ def get_ref_images_fromVideo(cap, ref_img_index_list, ref_keypoints):
 
 
 class Few_Shot_Dataset(data.Dataset):
-    def __init__(self, dict_info, n_ref = 2, is_train = False):
+    def __init__(self, dict_info, n_ref=2, is_train = False):
         super(Few_Shot_Dataset, self).__init__()
         self.driven_images = dict_info["driven_images"]
         self.driven_keypoints = dict_info["driven_keypoints"]
@@ -130,7 +138,6 @@ class Few_Shot_Dataset(data.Dataset):
         self.beta = np.ones([256,256,3]) * np.random.rand(3) * 20  # 色彩调整0-20个色差
         self.beta = self.beta.astype(np.uint8)
 
-
         if self.is_train:
             video_index = random.randint(0, len(self.driven_images) - 1)
             current_clip = random.randint(0, self.clip_count_list[video_index] - 1)
@@ -156,11 +163,12 @@ class Few_Shot_Dataset(data.Dataset):
         mouth_height = mouth_rect[:, 1].max()
 
         # source_img, target_img,crop_coords = generate_input(target_img, target_keypoints, target_mask_keypoints, self.is_train)
-        source_img, target_img,crop_coords = generate_input(target_img, target_keypoints, target_mask_keypoints, self.is_train, mode=["mouth_bias", "nose", "eye"],
-                                                            mouth_width = mouth_width, mouth_height = mouth_height)
+        source_img, target_img, crop_coords = generate_input(target_img, target_keypoints, target_mask_keypoints,
+                                                             self.is_train, mode=["mouth_bias", "nose", "eye"],
+                                                            mouth_width=mouth_width, mouth_height = mouth_height)
 
-        target_img = target_img/255.
-        source_img = source_img/255.
+        target_img = target_img / 255.
+        source_img = source_img / 255.
         ref_img = self.ref_img / 255.
 
         # tensor
@@ -246,6 +254,7 @@ def generate_input_pixels(img, keypoints, rotationMatrix, pixels_mouth, mask_key
     frame = pixels_mouth.reshape(15, 30, 3).clip(0, 255).astype(np.uint8)
 
     frame = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (150, 100))
+    # frame = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (300, 200))
     sharpen_image = frame.astype(np.float32)
     mean_ = int(np.mean(sharpen_image))
     max_, min_ = mean_ + 60, mean_ - 60

@@ -9,7 +9,8 @@ class Vgg19(torch.nn.Module):
     """
     def __init__(self, requires_grad=False):
         super(Vgg19, self).__init__()
-        vgg_model = models.vgg19(pretrained=True)
+        # vgg_model = models.vgg19(pretrained=True)
+        vgg_model = models.vgg19(weights=models.VGG19_Weights.DEFAULT)
         vgg_pretrained_features = vgg_model.features
         self.slice1 = torch.nn.Sequential()
         self.slice2 = torch.nn.Sequential()

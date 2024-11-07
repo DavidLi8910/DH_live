@@ -1,32 +1,82 @@
 import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "true"
-current_dir = os.path.dirname(os.path.abspath(__file__))
 import sys
-sys.path.append(os.path.join(current_dir, ".."))
-from talkingface.models.common.Discriminator import Discriminator
-from talkingface.models.common.VGG19 import Vgg19
-from talkingface.models.DINet import DINet_five_Ref
-from talkingface.util.utils import GANLoss,get_scheduler, update_learning_rate
-from talkingface.config.config import DINetTrainingOptions
-from torch.utils.tensorboard import SummaryWriter
-from talkingface.util.log_board import log
+import subprocess
+import signal
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 import random
 import numpy as np
-import os
-import sys
 import torch.nn.functional as F
 import cv2
-from talkingface.data.few_shot_dataset import Few_Shot_Dataset,data_preparation
+
+os.environ["KMP_DUPLICATE_LIB_OK"] = "true"
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+sys.path.append(os.path.join(current_dir, ".."))
+
+from talkingface.models.common.Discriminator import Discriminator
+from talkingface.models.common.VGG19 import Vgg19
+from talkingface.models.DINet import DINet_five_Ref
+from talkingface.util.utils import GANLoss, get_scheduler, update_learning_rate
+from talkingface.config.config import DINetTrainingOptions
+from talkingface.util.log_board import log
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
+from talkingface.data.few_shot_dataset import Few_Shot_Dataset, data_preparation
+
 
 def Tensor2img(tensor_, channel_index):
     frame = tensor_[channel_index:channel_index + 3, :, :].detach().squeeze(0).cpu().float().numpy()
     frame = np.transpose(frame, (1, 2, 0)) * 255.0
     frame = frame.clip(0, 255)
     return frame.astype(np.uint8)
+
+
+def get_video_list(path):
+    # 使用列表推导式一次性完成视频列表的创建和路径拼接
+    video_list = [os.path.join(path, i) for i in os.listdir(path)]
+
+    return video_list
+
+
+def get_train_data_loader(video_list, n_ref, batch_size):
+    # 对视频列表进行排序
+    video_list.sort()
+    
+    # 准备数据
+    train_dict_info = data_preparation(video_list)
+    
+    # 创建数据集
+    train_set = Few_Shot_Dataset(train_dict_info, n_ref=n_ref, is_train=True)
+    
+    # 创建数据加载器
+    training_data_loader = DataLoader(dataset=train_set, num_workers=2, batch_size=batch_size, shuffle=True)
+    
+    return training_data_loader
+
+
+# 启动 TensorBoard
+def start_tensorboard(log_dir):
+    tb_process = subprocess.Popen(
+        ['tensorboard', '--logdir', log_dir, '--host', '0.0.0.0', '--port', '6006'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    print(f"TensorBoard started at http://0.0.0.0:6006 (logdir: {log_dir})")
+    return tb_process
+
+
+# 关闭 TensorBoard
+def stop_tensorboard(tb_process):
+    print("Stopping TensorBoard...")
+    tb_process.terminate()
+    try:
+        tb_process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        tb_process.kill()
+    print("TensorBoard stopped.")
+
 
 if __name__ == "__main__":
     '''
@@ -39,27 +89,29 @@ if __name__ == "__main__":
     opt.target_channel = 3
     opt.ref_channel = n_ref * 3 * 2
     opt.batch_size = 4
-    opt.result_path = "checkpoint/Dinet_five_ref"
+    checkpoint_name = "DINet_five_Ref"
+    opt.result_path = f"checkpoint/{checkpoint_name}"
     opt.resume = False
-    opt.resume_path = None
+    opt.resume_path = ""
+    opt.lr_d = 0.0005
+    opt.lr_g = 0.0005
+
+    train_log_dir = "/root/tf-logs"
 
     # set seed
     random.seed(opt.seed)
     np.random.seed(opt.seed)
     torch.cuda.manual_seed(opt.seed)
 
-
-    video_list = []
     # path_ = r"../preparation_bilibili"
     path_ = opt.train_data
-    video_list += [os.path.join(path_, i) for i in os.listdir(path_)]
+    video_list = get_video_list(path_)
+    video_count = len(video_list)
+    
+    # 打印视频数量
+    print("video_selected final: ", video_count)
+    training_data_loader = get_train_data_loader(video_list, n_ref, opt.batch_size)
 
-    print("video_selected final: ", len(video_list))
-    video_list.sort()
-    train_dict_info = data_preparation(video_list[:])
-    train_set = Few_Shot_Dataset(train_dict_info, n_ref=n_ref, is_train=True)
-    training_data_loader = DataLoader(dataset=train_set, num_workers=0, batch_size=opt.batch_size, shuffle=True)
-    train_log_path = "train_log.txt"
     train_data_length = len(training_data_loader)
     # init network
     net_g = DINet_five_Ref(opt.source_channel,opt.ref_channel).cuda()
@@ -73,7 +125,7 @@ if __name__ == "__main__":
     if opt.resume:
         print('loading checkpoint {}'.format(opt.resume_path))
         checkpoint = torch.load(opt.resume_path)
-        # opt.start_epoch = checkpoint['epoch']
+        opt.start_epoch = checkpoint['epoch']
         # opt.start_epoch = 200
         net_g_static = checkpoint['state_dict']['net_g']
         net_g.load_state_dict(net_g_static)
@@ -88,110 +140,124 @@ if __name__ == "__main__":
     net_g_scheduler = get_scheduler(optimizer_g, opt.non_decay, opt.decay)
     net_d_scheduler = get_scheduler(optimizer_d, opt.non_decay, opt.decay)
 
-
-
-    train_log_path = os.path.join("checkpoint/{}/log".format("DiNet_five_ref"), "train")
+    train_log_path = os.path.join(train_log_dir, checkpoint_name, "train", "log")
     os.makedirs(train_log_path, exist_ok=True)
+    tb_process = start_tensorboard(train_log_path)
     train_logger = SummaryWriter(train_log_path)
 
-    # start train
-    for epoch in range(opt.start_epoch, opt.non_decay + opt.decay + 1):
-        net_g.train()
-        avg_loss_g_perception = 0
-        avg_Loss_DI = 0
-        avg_Loss_GI = 0
-        for iteration, data in enumerate(training_data_loader):
-            # read data
-            source_tensor, ref_tensor, target_tensor = data
-            source_tensor = source_tensor.float().cuda()
-            ref_tensor = ref_tensor.float().cuda()
-            target_tensor = target_tensor.float().cuda()
+    try:
+        # start train
+        for epoch in range(opt.start_epoch, opt.non_decay + opt.decay + 1):
+            net_g.train()
+            avg_loss_g_perception = 0
+            avg_Loss_DI = 0
+            avg_Loss_GI = 0
 
-            source_tensor, source_prompt_tensor = source_tensor[:, :3], source_tensor[:, 3:]
-            # network forward
-            fake_out = net_g(source_tensor, source_prompt_tensor, ref_tensor)
-            # down sample output image and real image
-            fake_out_half = F.avg_pool2d(fake_out, 3, 2, 1, count_include_pad=False)
-            target_tensor_half = F.interpolate(target_tensor, scale_factor=0.5, mode='bilinear')
-            # (1) Update D network
-            optimizer_d.zero_grad()
-            # compute fake loss
-            _,pred_fake_d = net_d(fake_out)
-            loss_d_fake = criterionGAN(pred_fake_d, False)
-            # compute real loss
-            _,pred_real_d = net_d(target_tensor)
-            loss_d_real = criterionGAN(pred_real_d, True)
-            # Combine D loss
-            loss_dI = (loss_d_fake + loss_d_real) * 0.5
-            loss_dI.backward(retain_graph=True)
-            optimizer_d.step()
-            # (2) Update G network
-            _, pred_fake_dI = net_d(fake_out)
-            optimizer_g.zero_grad()
-            # compute perception loss
-            perception_real = net_vgg(target_tensor)
-            perception_fake = net_vgg(fake_out)
-            perception_real_half = net_vgg(target_tensor_half)
-            perception_fake_half = net_vgg(fake_out_half)
-            loss_g_perception = 0
-            for i in range(len(perception_real)):
-                loss_g_perception += criterionL1(perception_fake[i], perception_real[i])
-                loss_g_perception += criterionL1(perception_fake_half[i], perception_real_half[i])
-            loss_g_perception = (loss_g_perception / (len(perception_real) * 2)) * opt.lamb_perception
-            # gan dI loss
-            loss_g_dI = criterionGAN(pred_fake_dI, True)
-            # combine perception loss and gan loss
-            loss_g = loss_g_perception + loss_g_dI
-            loss_g.backward()
-            optimizer_g.step()
-            message = "===> Epoch[{}]({}/{}): Loss_DI: {:.4f} Loss_GI: {:.4f} Loss_perception: {:.4f} lr_g = {:.7f} lr_d = {:.7f}".format(
-                    epoch, iteration, len(training_data_loader), float(loss_dI), float(loss_g_dI),
-                    float(loss_g_perception), optimizer_g.param_groups[0]['lr'], optimizer_d.param_groups[0]['lr'])
-            print(message)
-            # with open("train_log.txt", "a") as f:
-            #     f.write(message + "\n")
+            if epoch % opt.checkpoint == 0:
+                new_video_list = get_video_list(path_)
+                new_video_count = len(new_video_list)
+                
+                if video_count != new_video_count:
+                    print(f"原数据集数量：{video_count}，检测到数据集数量：{new_video_count} 重新加载数据集...")
+                    training_data_loader = get_train_data_loader(new_video_list, n_ref, opt.batch_size)
+                    video_count = new_video_count
+            
+            for iteration, data in enumerate(training_data_loader):
+                # read data
+                source_tensor, ref_tensor, target_tensor = data
+                source_tensor = source_tensor.float().cuda()
+                ref_tensor = ref_tensor.float().cuda()
+                target_tensor = target_tensor.float().cuda()
 
-            if iteration%200 == 0:
-                inference_out = fake_out * 255
-                inference_out = inference_out[0].cpu().permute(1, 2, 0).float().detach().numpy().astype(np.uint8)
-                inference_in = (target_tensor[0, :3]* 255).cpu().permute(1, 2, 0).float().detach().numpy().astype(np.uint8)
-                inference_in_prompt = (source_prompt_tensor[0, :3] * 255).cpu().permute(1, 2, 0).float().detach().numpy().astype(
-                    np.uint8)
-                frame2 = Tensor2img(ref_tensor[0], 0)
-                frame3 = Tensor2img(ref_tensor[0], 3)
-                inference_out = np.concatenate([inference_in, inference_in_prompt, inference_out, frame2, frame3], axis=1)
-                inference_out = cv2.cvtColor(inference_out, cv2.COLOR_RGB2BGR)
+                source_tensor, source_prompt_tensor = source_tensor[:, :3], source_tensor[:, 3:]
+                # network forward
+                fake_out = net_g(source_tensor, source_prompt_tensor, ref_tensor)
+                # down sample output image and real image
+                fake_out_half = F.avg_pool2d(fake_out, 3, 2, 1, count_include_pad=False)
+                target_tensor_half = F.interpolate(target_tensor, scale_factor=0.5, mode='bilinear')
+                # (1) Update D network
+                optimizer_d.zero_grad()
+                # compute fake loss
+                _,pred_fake_d = net_d(fake_out)
+                loss_d_fake = criterionGAN(pred_fake_d, False)
+                # compute real loss
+                _,pred_real_d = net_d(target_tensor)
+                loss_d_real = criterionGAN(pred_real_d, True)
+                # Combine D loss
+                loss_dI = (loss_d_fake + loss_d_real) * 0.5
+                loss_dI.backward(retain_graph=True)
+                optimizer_d.step()
+                # (2) Update G network
+                _, pred_fake_dI = net_d(fake_out)
+                optimizer_g.zero_grad()
+                # compute perception loss
+                perception_real = net_vgg(target_tensor)
+                perception_fake = net_vgg(fake_out)
+                perception_real_half = net_vgg(target_tensor_half)
+                perception_fake_half = net_vgg(fake_out_half)
+                loss_g_perception = 0
+                for i in range(len(perception_real)):
+                    loss_g_perception += criterionL1(perception_fake[i], perception_real[i])
+                    loss_g_perception += criterionL1(perception_fake_half[i], perception_real_half[i])
+                loss_g_perception = (loss_g_perception / (len(perception_real) * 2)) * opt.lamb_perception
+                # gan dI loss
+                loss_g_dI = criterionGAN(pred_fake_dI, True)
+                # combine perception loss and gan loss
+                loss_g = loss_g_perception + loss_g_dI
+                loss_g.backward()
+                optimizer_g.step()
+                message = "===> Epoch[{}]({}/{}): Loss_DI: {:.4f} Loss_GI: {:.4f} Loss_perception: {:.4f} lr_g = {:.7f} lr_d = {:.7f}".format(
+                        epoch, iteration, len(training_data_loader), float(loss_dI), float(loss_g_dI),
+                        float(loss_g_perception), optimizer_g.param_groups[0]['lr'], optimizer_d.param_groups[0]['lr'])
+                print(message)
+                # with open("train_log.txt", "a") as f:
+                #     f.write(message + "\n")
 
-                log(train_logger, fig=inference_out, tag="Training/epoch_{}_{}".format(epoch, iteration))
+                if iteration % 200 == 0:
+                    inference_out = fake_out * 255
+                    inference_out = inference_out[0].cpu().permute(1, 2, 0).float().detach().numpy().astype(np.uint8)
+                    inference_in = (target_tensor[0, :3]* 255).cpu().permute(1, 2, 0).float().detach().numpy().astype(np.uint8)
+                    inference_in_prompt = (source_prompt_tensor[0, :3] * 255).cpu().permute(1, 2, 0).float().detach().numpy().astype(
+                        np.uint8)
+                    frame2 = Tensor2img(ref_tensor[0], 0)
+                    frame3 = Tensor2img(ref_tensor[0], 3)
+                    inference_out = np.concatenate([inference_in, inference_in_prompt, inference_out, frame2, frame3], axis=1)
+                    inference_out = cv2.cvtColor(inference_out, cv2.COLOR_RGB2BGR)
 
-                real_iteration = epoch * len(training_data_loader) + iteration
-                message1 = "Step {}/{}, ".format(real_iteration, (epoch + 1) * len(training_data_loader))
-                message2 = ""
-                losses = [loss_dI.item(), loss_g_perception.item(), loss_g_dI.item()]
-                train_logger.add_scalar("Loss/loss_dI", losses[0], real_iteration)
-                train_logger.add_scalar("Loss/loss_g_perception", losses[1], real_iteration)
-                train_logger.add_scalar("Loss/loss_g_dI", losses[2], real_iteration)
+                    log(train_logger, fig=inference_out, tag="Training/epoch_{}_{}".format(epoch, iteration))
 
-            avg_loss_g_perception += loss_g_perception.item()
-            avg_Loss_DI += loss_dI.item()
-            avg_Loss_GI += loss_g_dI.item()
-        train_logger.add_scalar("Loss/{}".format("epoch_g_perception"), avg_loss_g_perception / len(training_data_loader), epoch)
-        train_logger.add_scalar("Loss/{}".format("epoch_DI"),
-                                avg_Loss_DI / len(training_data_loader), epoch)
-        train_logger.add_scalar("Loss/{}".format("epoch_GI"),
-                                avg_Loss_GI / len(training_data_loader), epoch)
-        update_learning_rate(net_g_scheduler, optimizer_g)
-        update_learning_rate(net_d_scheduler, optimizer_d)
+                    real_iteration = epoch * len(training_data_loader) + iteration
+                    message1 = "Step {}/{}, ".format(real_iteration, (epoch + 1) * len(training_data_loader))
+                    message2 = ""
+                    losses = [loss_dI.item(), loss_g_perception.item(), loss_g_dI.item()]
+                    train_logger.add_scalar("Loss/loss_dI", losses[0], real_iteration)
+                    train_logger.add_scalar("Loss/loss_g_perception", losses[1], real_iteration)
+                    train_logger.add_scalar("Loss/loss_g_dI", losses[2], real_iteration)
 
-        # checkpoint
-        if epoch % opt.checkpoint == 0:
-            if not os.path.exists(opt.result_path):
-                os.mkdir(opt.result_path)
-            model_out_path = os.path.join(opt.result_path, 'epoch_{}.pth'.format(epoch))
-            states = {
-                'epoch': epoch + 1,
-                'state_dict': {'net_g': net_g.state_dict(), 'net_d': net_d.state_dict()},
-                'optimizer': {'net_g': optimizer_g.state_dict(), 'net_d': optimizer_d.state_dict()}
-            }
-            torch.save(states, model_out_path)
-            print("Checkpoint saved to {}".format(epoch))
+                avg_loss_g_perception += loss_g_perception.item()
+                avg_Loss_DI += loss_dI.item()
+                avg_Loss_GI += loss_g_dI.item()
+            train_logger.add_scalar("Loss/{}".format("epoch_g_perception"), avg_loss_g_perception / len(training_data_loader), epoch)
+            train_logger.add_scalar("Loss/{}".format("epoch_DI"),
+                                    avg_Loss_DI / len(training_data_loader), epoch)
+            train_logger.add_scalar("Loss/{}".format("epoch_GI"),
+                                    avg_Loss_GI / len(training_data_loader), epoch)
+            update_learning_rate(net_g_scheduler, optimizer_g)
+            update_learning_rate(net_d_scheduler, optimizer_d)
+
+            # checkpoint
+            if epoch % opt.checkpoint == 0:
+                if not os.path.exists(opt.result_path):
+                    os.mkdir(opt.result_path)
+                model_out_path = os.path.join(opt.result_path, 'epoch_{}.pth'.format(epoch))
+                states = {
+                    'epoch': epoch + 1,
+                    'state_dict': {'net_g': net_g.state_dict(), 'net_d': net_d.state_dict()},
+                    'optimizer': {'net_g': optimizer_g.state_dict(), 'net_d': optimizer_d.state_dict()}
+                }
+                torch.save(states, model_out_path)
+                print("Checkpoint saved to {}".format(epoch))
+    finally:
+        # 确保训练结束后关闭 TensorBoard
+        stop_tensorboard(tb_process)
+        train_logger.close()

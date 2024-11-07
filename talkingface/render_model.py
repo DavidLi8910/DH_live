@@ -1,15 +1,12 @@
-import os.path
 import torch
-import os
+import cv2
 import numpy as np
-import time
 from talkingface.run_utils import smooth_array, video_pts_process
 from talkingface.run_utils import mouth_replace, prepare_video_data
 from talkingface.utils import generate_face_mask, INDEX_LIPS_OUTER
 from talkingface.data.few_shot_dataset import select_ref_index,get_ref_images_fromVideo,generate_input, generate_input_pixels
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
-import pickle
-import cv2
 
 
 face_mask = generate_face_mask()
@@ -38,7 +35,7 @@ class RenderModel:
         self.__net.load_state_dict(checkpoint)
         self.__net.eval()
 
-    def reset_charactor(self, video_path, Path_pkl, ref_img_index_list = None):
+    def reset_charactor(self, video_path, Path_pkl, ref_img_index_list=None):
         if self.__cap_input is not None:
             self.__cap_input.release()
 
@@ -65,10 +62,10 @@ class RenderModel:
                 coords_array[i, j, 0] = j/149
                 coords_array[i, j, 1] = i/100
                 # coords_array[i, j, 2] = int((-75 + abs(j - 75))*(2./3))
-                coords_array[i, j, 2] = ((j - 75)/ 75) ** 2
+                coords_array[i, j, 2] = ((j - 75) / 75) ** 2
                 coords_array[i, j, 3] = 1
 
-        coords_array = coords_array*np.array([x_max - x_min, y_max - y_min, z_max - z_min, 1]) + np.array([x_min, y_min, z_min, 0])
+        coords_array = coords_array * np.array([x_max - x_min, y_max - y_min, z_max - z_min, 1]) + np.array([x_min, y_min, z_min, 0])
         self.__mouth_coords_array = coords_array.reshape(-1, 4).transpose(1, 0)
 
 

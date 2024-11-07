@@ -61,13 +61,20 @@ def detect_face_mesh(frame):
         else:
             image_height, image_width = frame.shape[:2]
             for face_landmarks in results.multi_face_landmarks:
-                for index_, i in enumerate(face_landmarks.landmark):
-                    x_px = min(math.floor(i.x * image_width), image_width - 1)
-                    y_px = min(math.floor(i.y * image_height), image_height - 1)
-                    z_px = min(math.floor(i.z * image_width), image_width - 1)
+                for index_, landmark in enumerate(face_landmarks.landmark):
+                    x_px = min(math.floor(landmark.x * image_width), image_width - 1)
+                    y_px = min(math.floor(landmark.y * image_height), image_height - 1)
+                    z_px = min(math.floor(landmark.z * max(image_width, image_height)), max(image_width, image_height) - 1)
                     pts_3d[index_] = np.array([x_px, y_px, z_px])
         return pts_3d
 
+def is_frame_completely_black(frame):
+    # 将帧转换为灰度
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # 计算灰度帧中的非零像素数量
+    non_zero_pixels = cv2.countNonZero(gray_frame)
+    # 如果没有非零像素，则帧完全为黑色
+    return non_zero_pixels == 0
 
 def ExtractFromVideo(video_path, circle = False):
     cap = cv2.VideoCapture(video_path)
@@ -99,6 +106,13 @@ def ExtractFromVideo(video_path, circle = False):
             pts_3d = -1
             break
         elif tag_ == -1:  # 有时候人脸检测会失败，就用上一帧的结果替代这一帧的结果
+            # 检测帧是否完全为黑色，如果是黑色则舍弃此视频
+            if is_frame_completely_black(frame):
+                print("第{}帧人脸检测异常，为全黑图像无人脸, tag: {}".format(frame_index, tag_))
+                pts_3d = -2
+                cap.release()
+                break
+
             rect = face_rect_list[-1]
         elif tag_ != 1:
             print("第{}帧人脸检测异常，请剔除掉多个人脸、大角度侧脸（鼻子不在两个眼之间）、部分人脸框在画面外、人脸像素低于80*80, tag: {}".format(frame_index, tag_))
@@ -108,7 +122,7 @@ def ExtractFromVideo(video_path, circle = False):
             # print(frame_index, face_area_inter)
             if face_area_inter < 0.6:
                 print("人脸区域变化幅度太大，请复查，超出值为{}, frame_num: {}".format(face_area_inter, frame_index))
-                pts_3d = -2
+                pts_3d = -3
                 break
 
         face_rect_list.append(rect)
@@ -141,8 +155,8 @@ def ExtractFromVideo(video_path, circle = False):
 
 def CirculateVideo(video_in_path, video_out_path, export_imgs = False):
     # 1 视频转换为25FPS, 并折叠循环拼接
-    front_video_path = "front.mp4"
-    back_video_path = "back.mp4"
+    front_video_path = "./data/front.mp4"
+    back_video_path = "./data/back.mp4"
     # ffmpeg_cmd = "ffmpeg -i {} -r 25 -ss 00:00:00 -t 00:02:00 -an -loglevel quiet -y {}".format(video_in_path, front_video_path)
     ffmpeg_cmd = "ffmpeg -i {} -r 25 -an -loglevel quiet -y {}".format(video_in_path, front_video_path)
     os.system(ffmpeg_cmd)
@@ -158,7 +172,7 @@ def CirculateVideo(video_in_path, video_out_path, export_imgs = False):
 
     ffmpeg_cmd = "ffmpeg -i {} -vf reverse -y {}".format(front_video_path, back_video_path)
     os.system(ffmpeg_cmd)
-    ffmpeg_cmd = "ffmpeg -f concat -i {} -c:v copy -y {}".format("video_concat.txt", video_out_path)
+    ffmpeg_cmd = "ffmpeg -f concat -i {} -c:v copy -y {}".format("./data/video_concat.txt", video_out_path)
     os.system(ffmpeg_cmd)
     # exit()
     print("正向视频帧数：", frames)
@@ -221,7 +235,8 @@ def main():
     video_name = sys.argv[1]
     print(f"Video name is set to: {video_name}")
 
-    new_data_path = "video_data/{}".format(uuid.uuid1())
+    file_name_without_extension = os.path.basename(video_name).split('.')[0]
+    new_data_path = "video_data/{}".format(file_name_without_extension)
     os.makedirs(new_data_path, exist_ok=True)
     video_out_path = "{}/circle.mp4".format(new_data_path)
     CirculateVideo(video_name, video_out_path, export_imgs=False)

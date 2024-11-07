@@ -2,6 +2,8 @@ from talkingface.utils import *
 import os
 import pickle
 import copy
+
+
 def Tensor2img(tensor_, channel_index):
     frame = tensor_[channel_index:channel_index + 3, :, :].detach().squeeze(0).cpu().float().numpy()
     frame = np.transpose(frame, (1, 2, 0)) * 255.0
@@ -10,6 +12,8 @@ def Tensor2img(tensor_, channel_index):
 INDEX_EYE_CORNER = [INDEX_LEFT_EYE[0], INDEX_LEFT_EYE[8], INDEX_RIGHT_EYE[0], INDEX_RIGHT_EYE[8]]
 # INDEX_FACE_OVAL_UPPER = INDEX_FACE_OVAL[7:-7]
 INDEX_FACE_OVAL_UPPER = INDEX_FACE_OVAL[:7] + INDEX_FACE_OVAL[-7:]
+
+
 def calc_face_mat(pts_array_origin, face_pts_mean):
     '''
 
@@ -89,6 +93,8 @@ def calc_face_mat(pts_array_origin, face_pts_mean):
         pts_normalized_list.append(keypoints_normalized[:,:3])
 
     return mat_list,pts_normalized_list,face_pts_mean_personal
+
+
 face_pts_mean = None
 def video_pts_process(pts_array_origin):
     global face_pts_mean

@@ -42,6 +42,7 @@ if Normalized:
         i = (tmp + np.arange(len(i))).tolist()
         list_.append(i)
         tmp += len(i)
+
 [INDEX_LEFT_EYEBROW, INDEX_RIGHT_EYEBROW, INDEX_NOSE_EDGE, INDEX_NOSE_MID, INDEX_LIPS_INNER, INDEX_LIPS_OUTER, INDEX_LEFT_EYE, INDEX_RIGHT_EYE, INDEX_FACE_OVAL, INDEX_MUSCLE] = list_
 INDEX_EYEBROW = INDEX_LEFT_EYEBROW + INDEX_RIGHT_EYEBROW
 INDEX_NOSE = INDEX_NOSE_EDGE + INDEX_NOSE_MID
@@ -51,6 +52,8 @@ INDEX_EYE = INDEX_LEFT_EYE + INDEX_RIGHT_EYE
 # print(len(main_keypoints_index))
 # print(len(set(main_keypoints_index)))
 FACE_MASK_INDEX = INDEX_FACE_OVAL[2:-2]
+
+
 def crop_face(keypoints, is_train = False, size = [512, 512]):
     """
     x_ratio: 裁剪出一个正方形，边长根据keypoints的宽度 * x_ratio决定
